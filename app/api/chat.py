@@ -1,23 +1,40 @@
 """
 聊天相关的 API 路由
-定义客户端可以调用的接口，包括 API 接口和聊天页面
+定义客户端可以调用的接口，包括 AI 聊天、会话管理、消息查询
 """
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.templating import Jinja2Templates
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # 导入数据模型
-from app.model.schemas import ChatMessageRequest, ChatMessageResponse, HelloResponse
+from app.model.schemas import (
+    ChatMessageRequest,
+    ChatAnswerResponse,
+    SessionCreate,
+    SessionResponse,
+    SessionListResponse,
+    MessageListResponse,
+    ChatMessageResponse,
+    HelloResponse,
+)
 
-# 导入聊天服务（封装了 DeepSeek API 调用）
+# 导入数据库会话
+from app.model.database import get_db
+
+# 导入服务层
 from app.service.chat_service import chat_service
+from app.service.session_service import (
+    get_or_create_user,
+    create_session,
+    get_sessions_by_user,
+    get_messages_by_session,
+)
 
 # 创建路由实例
-# prefix="/chat" 表示所有接口路径前自动加 /chat
-# tags=["聊天"] 用于 Swagger 文档分组
 router = APIRouter(prefix="/chat", tags=["聊天"])
 
-# 配置模板引擎，指定模板文件存放目录
+# 配置模板引擎
 templates = Jinja2Templates(directory="app/templates")
 
 
@@ -27,8 +44,7 @@ templates = Jinja2Templates(directory="app/templates")
 async def chat_page(request: Request):
     """
     聊天页面入口
-    访问地址：http://127.0.0.1:8000/chat
-    返回渲染后的 HTML 聊天页面
+    访问地址：http://127.0.0.1:9000/chat
     """
     return templates.TemplateResponse("chat.html", {"request": request})
 
@@ -39,55 +55,185 @@ async def chat_page(request: Request):
 async def hello():
     """
     测试接口：返回 hello world
-    访问地址：http://127.0.0.1:8000/chat/hello
     """
     return {"message": "hello world"}
 
 
-@router.get("/hello/{name}", response_model=HelloResponse)
-async def hello_name(name: str):
-    """
-    带参数的测试接口：返回个性化的问候
-    例如访问：http://127.0.0.1:8000/chat/hello/小明
-    """
-    return {"message": f"hello {name}"}
-
-
 # ==================== 核心聊天接口 ====================
 
-@router.post("", response_model=ChatMessageResponse)
-async def chat(request: ChatMessageRequest):
+@router.post("", response_model=ChatAnswerResponse)
+async def chat(request: ChatMessageRequest, db: AsyncSession = Depends(get_db)):
     """
-    聊天接口：接收用户消息，调用 DeepSeek AI 返回回复
+    发送消息并获取 AI 回复
+
+    流程：
+        1. 保存用户消息到数据库
+        2. 调用 DeepSeek API
+        3. 保存 AI 回复到数据库
+        4. 返回 AI 回复
 
     请求示例：
-        POST /chat
         {
+            "session_id": 1,
             "message": "你好"
         }
 
     响应示例：
         {
-            "answer": "你好！很高兴见到你。"
+            "answer": "你好！有什么可以帮你的吗？"
         }
     """
     try:
-        # 调用服务层的 chat_with_ai 方法
-        # await 是因为这个方法内部发送了异步 HTTP 请求
-        answer = await chat_service.chat_with_ai(request.message)
-
-        # 返回统一的响应格式
-        return ChatMessageResponse(answer=answer)
+        answer = await chat_service.chat_with_ai(db, request.session_id, request.message)
+        return ChatAnswerResponse(answer=answer)
 
     except ValueError as e:
-        # 配置类错误（如 API 密钥未设置）
-        # 返回 500 状态码，并在响应体中携带错误信息
         raise HTTPException(status_code=500, detail=str(e))
-
     except RuntimeError as e:
-        # 运行时错误（如网络异常、API 返回错误）
         raise HTTPException(status_code=502, detail=str(e))
-
     except Exception as e:
-        # 捕获所有未预料到的异常，防止服务器崩溃
         raise HTTPException(status_code=500, detail=f"服务器内部错误: {e}")
+
+
+# ==================== 会话管理接口 ====================
+
+@router.post("/session/create", response_model=SessionResponse)
+async def create_chat_session(request: SessionCreate, db: AsyncSession = Depends(get_db)):
+    """
+    创建新的聊天会话
+
+    请求示例：
+        {
+            "user_id": 1,
+            "title": "第一次聊天"
+        }
+
+    响应示例：
+        {
+            "id": 1,
+            "user_id": 1,
+            "title": "第一次聊天",
+            "created_time": "2026-05-31T10:00:00"
+        }
+    """
+    try:
+        session = await create_session(db, request.user_id, request.title)
+        return SessionResponse.model_validate(session)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建会话失败: {e}")
+
+
+@router.get("/session/list", response_model=SessionListResponse)
+async def list_sessions(user_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    获取指定用户的所有会话列表
+
+    参数:
+        user_id: 用户ID（URL 查询参数）
+
+    访问示例：
+        GET /chat/session/list?user_id=1
+
+    响应示例：
+        {
+            "sessions": [
+                {
+                    "id": 1,
+                    "user_id": 1,
+                    "title": "第一次聊天",
+                    "created_time": "2026-05-31T10:00:00"
+                }
+            ]
+        }
+    """
+    try:
+        sessions = await get_sessions_by_user(db, user_id)
+        return SessionListResponse(
+            sessions=[SessionResponse.model_validate(s) for s in sessions]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取会话列表失败: {e}")
+
+
+# ==================== 消息查询接口 ====================
+
+@router.get("/message/list", response_model=MessageListResponse)
+async def list_messages(session_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    获取指定会话的所有消息列表
+
+    参数:
+        session_id: 会话ID（URL 查询参数）
+
+    访问示例：
+        GET /chat/message/list?session_id=1
+
+    响应示例：
+        {
+            "messages": [
+                {
+                    "id": 1,
+                    "session_id": 1,
+                    "role": "user",
+                    "content": "你好",
+                    "created_time": "2026-05-31T10:00:00"
+                },
+                {
+                    "id": 2,
+                    "session_id": 1,
+                    "role": "assistant",
+                    "content": "你好！有什么可以帮你的吗？",
+                    "created_time": "2026-05-31T10:00:01"
+                }
+            ]
+        }
+    """
+    try:
+        messages = await get_messages_by_session(db, session_id)
+        return MessageListResponse(
+            messages=[ChatMessageResponse.model_validate(m) for m in messages]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取消息列表失败: {e}")
+
+
+# ==================== 用户接口（辅助）====================
+
+@router.post("/user/get_or_create", response_model=dict)
+async def get_or_create_user_api(username: str, nickname: str | None = None, db: AsyncSession = Depends(get_db)):
+    """
+    获取或创建用户
+    如果用户已存在则返回，不存在则创建
+
+    访问示例：
+        POST /chat/user/get_or_create?username=zhangchunran&nickname=春然
+
+    响应示例：
+        {
+            "id": 1,
+            "username": "zhangchunran",
+            "nickname": "春然",
+            "message": "用户已创建"
+        }
+    """
+    try:
+        from app.service.session_service import get_user_by_username
+
+        existing = await get_user_by_username(db, username)
+        if existing:
+            return {
+                "id": existing.id,
+                "username": existing.username,
+                "nickname": existing.nickname,
+                "message": "用户已存在"
+            }
+
+        user = await get_or_create_user(db, username, nickname)
+        return {
+            "id": user.id,
+            "username": user.username,
+            "nickname": user.nickname,
+            "message": "用户已创建"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"用户操作失败: {e}")
