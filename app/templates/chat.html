@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- 设置视口，确保在手机上也能正常显示 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 聊天助手</title>
+    <!-- 引入 CSS 样式文件 -->
+    <link rel="stylesheet" href="/static/chat.css">
+</head>
+<body>
+    <!-- 页面主容器 -->
+    <div class="app">
+        <!-- 顶部标题栏 -->
+        <header class="header">
+            <h1>AI 聊天助手</h1>
+            <p class="subtitle">基于 DeepSeek AI 的智能对话</p>
+        </header>
+
+        <!-- 聊天记录显示区域 -->
+        <main class="chat-container" id="chat-container">
+            <!-- 欢迎消息，页面加载时默认显示 -->
+            <div class="message assistant-message">
+                <div class="avatar">AI</div>
+                <div class="bubble">你好！我是你们的 AI 生活助手，有什么可以帮你的吗？</div>
+            </div>
+        </main>
+
+        <!-- 底部输入区域 -->
+        <footer class="input-area">
+            <div class="input-wrapper">
+                <!-- 消息输入框 -->
+                <!-- placeholder 是输入框为空时显示的提示文字 -->
+                <!-- rows="1" 表示默认只显示一行，输入内容多了会自动增高 -->
+                <textarea
+                    id="message-input"
+                    placeholder="输入消息，按回车发送..."
+                    rows="1"
+                ></textarea>
+                <!-- 发送按钮 -->
+                <button id="send-btn" type="button">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                    </svg>
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <!-- 引入 JavaScript 脚本文件 -->
+    <script src="/static/chat.js"></script>
+</body>
+</html>
