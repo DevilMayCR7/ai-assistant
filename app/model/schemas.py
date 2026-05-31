@@ -25,8 +25,6 @@ class UserResponse(BaseModel):
     """
     用户信息的响应模型
     """
-    # ConfigDict(from_attributes=True): 允许从 ORM 对象自动转换
-    # SQLAlchemy 模型对象可以直接传给这个 Pydantic 模型
     model_config = ConfigDict(from_attributes=True)
 
     id: int
@@ -69,8 +67,13 @@ class SessionListResponse(BaseModel):
 class ChatMessageRequest(BaseModel):
     """
     发送聊天消息的请求模型
+
+    两种用法：
+        1. 传 session_id：继续已有会话
+        2. 不传 session_id（只传 user_id）：自动获取最近会话，没有则创建
     """
-    session_id: int = Field(..., description="会话ID")
+    user_id: int = Field(..., description="用户ID")
+    session_id: int | None = Field(None, description="会话ID，不传则自动获取或创建")
     message: str = Field(..., min_length=1, description="用户消息内容")
 
 
@@ -92,6 +95,7 @@ class ChatAnswerResponse(BaseModel):
     AI 回复的响应模型
     """
     answer: str = Field(..., description="AI 回复内容")
+    session_id: int = Field(..., description="当前会话ID")
 
 
 class MessageListResponse(BaseModel):

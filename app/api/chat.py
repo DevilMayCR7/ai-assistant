@@ -44,7 +44,6 @@ templates = Jinja2Templates(directory="app/templates")
 async def chat_page(request: Request):
     """
     聊天页面入口
-    访问地址：http://127.0.0.1:9000/chat
     """
     return templates.TemplateResponse("chat.html", {"request": request})
 
@@ -64,28 +63,43 @@ async def hello():
 @router.post("", response_model=ChatAnswerResponse)
 async def chat(request: ChatMessageRequest, db: AsyncSession = Depends(get_db)):
     """
-    发送消息并获取 AI 回复
+    发送消息并获取 AI 回复（自动会话管理 + 消息持久化）
 
-    流程：
-        1. 保存用户消息到数据库
-        2. 调用 DeepSeek API
-        3. 保存 AI 回复到数据库
-        4. 返回 AI 回复
+    功能：
+        1. 如果传了 session_id，继续该会话
+        2. 如果没传 session_id，自动获取用户最近会话；没有则创建新会话
+        3. 保存用户消息到数据库（role="user"）
+        4. 调用 DeepSeek API
+        5. 保存 AI 回复到数据库（role="assistant"）
+        6. 返回 AI 回复和当前会话ID
 
-    请求示例：
+    请求示例 - 方式1（指定会话）：
         {
+            "user_id": 1,
             "session_id": 1,
+            "message": "你好"
+        }
+
+    请求示例 - 方式2（自动会话）：
+        {
+            "user_id": 1,
             "message": "你好"
         }
 
     响应示例：
         {
-            "answer": "你好！有什么可以帮你的吗？"
+            "answer": "你好！有什么可以帮你的吗？",
+            "session_id": 1
         }
     """
     try:
-        answer = await chat_service.chat_with_ai(db, request.session_id, request.message)
-        return ChatAnswerResponse(answer=answer)
+        answer, session_id = await chat_service.chat_with_ai(
+            db,
+            user_id=request.user_id,
+            user_message=request.message,
+            session_id=request.session_id,
+        )
+        return ChatAnswerResponse(answer=answer, session_id=session_id)
 
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -128,9 +142,6 @@ async def list_sessions(user_id: int, db: AsyncSession = Depends(get_db)):
     """
     获取指定用户的所有会话列表
 
-    参数:
-        user_id: 用户ID（URL 查询参数）
-
     访问示例：
         GET /chat/session/list?user_id=1
 
@@ -161,9 +172,6 @@ async def list_sessions(user_id: int, db: AsyncSession = Depends(get_db)):
 async def list_messages(session_id: int, db: AsyncSession = Depends(get_db)):
     """
     获取指定会话的所有消息列表
-
-    参数:
-        session_id: 会话ID（URL 查询参数）
 
     访问示例：
         GET /chat/message/list?session_id=1
@@ -200,7 +208,9 @@ async def list_messages(session_id: int, db: AsyncSession = Depends(get_db)):
 # ==================== 用户接口（辅助）====================
 
 @router.post("/user/get_or_create", response_model=dict)
-async def get_or_create_user_api(username: str, nickname: str | None = None, db: AsyncSession = Depends(get_db)):
+async def get_or_create_user_api(
+    username: str, nickname: str | None = None, db: AsyncSession = Depends(get_db)
+):
     """
     获取或创建用户
     如果用户已存在则返回，不存在则创建
