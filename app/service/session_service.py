@@ -15,14 +15,6 @@ from app.model.models import User, ChatSession, ChatMessage
 async def create_user(db: AsyncSession, username: str, nickname: str | None) -> User:
     """
     创建新用户
-
-    参数:
-        db: 数据库会话
-        username: 用户名
-        nickname: 昵称
-
-    返回:
-        新创建的用户对象
     """
     user = User(username=username, nickname=nickname)
     db.add(user)
@@ -91,7 +83,6 @@ async def get_sessions_by_user(db: AsyncSession, user_id: int) -> list[ChatSessi
 async def get_latest_session_by_user(db: AsyncSession, user_id: int) -> ChatSession | None:
     """
     获取用户最近一个会话
-    用于自动续接聊天上下文
     """
     result = await db.execute(
         select(ChatSession)
@@ -107,15 +98,6 @@ async def get_latest_session_by_user(db: AsyncSession, user_id: int) -> ChatSess
 async def create_message(db: AsyncSession, session_id: int, role: str, content: str) -> ChatMessage:
     """
     创建新消息
-
-    参数:
-        db: 数据库会话
-        session_id: 会话ID
-        role: 角色（"user" 或 "assistant"）
-        content: 消息内容
-
-    返回:
-        新创建的消息对象
     """
     msg = ChatMessage(session_id=session_id, role=role, content=content)
     db.add(msg)
@@ -135,9 +117,38 @@ async def get_messages_by_session(db: AsyncSession, session_id: int) -> list[Cha
     return list(result.scalars().all())
 
 
-async def get_messages_for_ai(db: AsyncSession, session_id: int) -> list[dict]:
+async def get_messages_for_ai(db: AsyncSession, session_id: int, limit: int = 20) -> list[dict]:
     """
     获取指定会话的历史消息，格式化为 AI 接口需要的格式
+
+    逻辑：
+        1. 按时间倒序取最近 N 条（默认20条）
+        2. 再按时间正序排列，保证对话顺序正确
+        3. 格式化为 {"role": "user|assistant", "content": "..."}
+
+    参数:
+        db: 数据库会话
+        session_id: 会话ID
+        limit: 最多取多少条历史消息，默认20条
+
+    返回:
+        [{"role": "user", "content": "..."}, ...]
     """
-    messages = await get_messages_by_session(db, session_id)
+    # 子查询：先按时间倒序取最近 limit 条
+    subquery = (
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_time.desc())
+        .limit(limit)
+        .subquery()
+    )
+
+    # 外层查询：按时间正序排列，保证对话顺序
+    result = await db.execute(
+        select(ChatMessage)
+        .select_from(subquery)
+        .order_by(ChatMessage.created_time.asc())
+    )
+
+    messages = list(result.scalars().all())
     return [{"role": msg.role, "content": msg.content} for msg in messages]
